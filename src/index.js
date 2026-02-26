@@ -55,6 +55,17 @@ exports.handler = async (event) => {
     const queryParams = event.queryStringParameters || {};
 
     try {
+        if (path.includes('/config') && method === 'GET') {
+            return {
+                statusCode: 200,
+                headers,
+                body: JSON.stringify({
+                    backend: endpoint ? 'Alternator' : 'DynamoDB',
+                    tableName: TABLE_NAME
+                })
+            };
+        }
+
         if (path.includes('/progress')) {
             if (method === 'GET') {
                 return await handleGetProgress(queryParams);
