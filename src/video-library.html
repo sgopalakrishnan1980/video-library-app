@@ -450,12 +450,18 @@
         let totalResponseTime = 0;
         let responseTimes = [];
 
+        const SESSION_VIDEOS = 'sessionVideos';
+        const SESSION_PLAYING = 'sessionPlaying';
+
         // Load saved configuration on page load
         window.addEventListener('DOMContentLoaded', () => {
             loadConfig();
             initializeUserId();
             updateStatusRibbon();
+            restoreSession();
         });
+
+        window.addEventListener('beforeunload', saveSessionState);
 
         function initializeUserId() {
             // Get or create a unique user ID for tracking
@@ -464,6 +470,72 @@
                 currentUserId = 'user-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
                 localStorage.setItem('userId', currentUserId);
             }
+        }
+
+        function saveSessionState() {
+            try {
+                if (cachedVideos && cachedVideos.length > 0) {
+                    sessionStorage.setItem(SESSION_VIDEOS, JSON.stringify(cachedVideos));
+                }
+                const videoPlayer = document.getElementById('videoPlayer');
+                if (currentVideoId && videoPlayer && videoPlayer.src) {
+                    const playing = {
+                        videoId: currentVideoId,
+                        title: document.getElementById('currentVideoTitle')?.textContent || '',
+                        url: videoPlayer.src,
+                        currentTime: videoPlayer.currentTime || 0
+                    };
+                    sessionStorage.setItem(SESSION_PLAYING, JSON.stringify(playing));
+                }
+            } catch (e) {
+                console.warn('Could not save session state:', e);
+            }
+        }
+
+        function restoreSession() {
+            try {
+                const videosJson = sessionStorage.getItem(SESSION_VIDEOS);
+                const playingJson = sessionStorage.getItem(SESSION_PLAYING);
+                const apiEndpoint = document.getElementById('apiEndpoint').value.trim();
+
+                if (videosJson && apiEndpoint) {
+                    cachedVideos = JSON.parse(videosJson);
+                    if (cachedVideos && cachedVideos.length > 0) {
+                        document.getElementById('emptyState').style.display = 'none';
+                        const continueWatching = cachedVideos.filter(v => {
+                            const pd = v.progressData || {};
+                            return (Number(pd.currentTime) || 0) > 0 && !Boolean(pd.completed);
+                        });
+                        if (continueWatching.length > 0) {
+                            document.getElementById('continueWatchingSection').style.display = 'block';
+                            displayContinueWatching(continueWatching);
+                        } else {
+                            document.getElementById('continueWatchingSection').style.display = 'none';
+                        }
+                        displayLibrary(cachedVideos);
+                        if (playingJson) {
+                            const playing = JSON.parse(playingJson);
+                            if (playing.videoId && playing.url) {
+                                currentVideoId = playing.videoId;
+                                const videoPlayer = document.getElementById('videoPlayer');
+                                const section = document.getElementById('videoPlayerSection');
+                                document.getElementById('currentVideoTitle').textContent = playing.title || 'Video';
+                                videoPlayer.src = playing.url;
+                                videoPlayer.currentTime = Math.max(0, playing.currentTime || 0);
+                                section.classList.add('active');
+                                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                setupProgressTracking(videoPlayer);
+                                videoPlayer.play().catch(() => {});
+                            }
+                        }
+                        refreshContinueWatching();
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not restore session:', e);
+            }
+            cachedVideos = [];
         }
 
         async function updateStatusRibbon() {
@@ -793,6 +865,7 @@
             displayLibrary(libraryVideos);
 
             cachedVideos = libraryVideos;
+            saveSessionState();
         }
 
         async function refreshContinueWatching() {
@@ -958,7 +1031,8 @@
             setupProgressTracking(videoPlayer);
             
             refreshContinueWatching();
-            
+            saveSessionState();
+
             videoPlayer.play().catch(error => {
                 console.error('Error playing video:', error);
                 showMessage('Unable to play video. Please check the video URL.', 'error');
@@ -998,6 +1072,7 @@
                     const percentComplete = (currentTime / duration) * 100;
                     console.log(`Saving progress: ${formatTime(currentTime)} / ${formatTime(duration)} (${percentComplete.toFixed(1)}%)`);
                     saveVideoProgress(currentVideoId, currentTime, false);
+                    saveSessionState();
                 }
             }, 3000);
 

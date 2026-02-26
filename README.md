@@ -91,6 +91,14 @@ AWS_REGION=ap-south-1 ./scripts/deploy.sh
 - Check: `aws dynamodb scan --table-name VideoLibrary --select COUNT --region YOUR_REGION`
 - Reload: `aws dynamodb batch-write-item --request-items file://sample-data/batch-write-items.json --region YOUR_REGION`
 
+### Privacy-first browsers (Brave, Firefox Strict, Safari Private, etc.)
+- **sessionStorage** is used to retain state (library, Continue Watching, playing video) across page refresh.
+- Some privacy-focused browsers restrict or clear sessionStorage, which can cause:
+  - Continue Watching to disappear after refresh
+  - Video library to require re-loading
+  - Playing video position to reset on refresh
+- If you experience this, use a standard browser profile or allow storage for the site.
+
 ---
 
 ## 🔄 Switch to ScyllaDB Alternator (No Redeploy)
