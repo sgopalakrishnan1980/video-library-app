@@ -1,0 +1,79 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# AWS
+.aws-sam/
+.env
+*.pem
+*.key
+
+# Lambda
+lambda-function.zip
+*.zip
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+.project
+.classpath
+.settings/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# CloudFormation
+packaged-template.yaml
+*.packaged.yaml
+
+# Deployment artifacts
+dist/
+build/
+.deployment/
+
+# Local configuration
+config.local.json
+.env.local
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Python
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+
+# Secrets (just in case)
+secrets.json
+credentials.json
+*.credentials
+
+# Output files
+output/
+outputs/
+
+# Test files
+test-results/
+.nyc_output/

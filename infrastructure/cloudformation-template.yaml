@@ -1,0 +1,426 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# ==============================================================================
+# CloudFormation Template (Beginner-friendly)
+# ==============================================================================
+# What this stack builds (high level):
+# - DynamoDB table: stores "videos" and "progress tracking" records
+# - Lambda function: a small Node.js API that reads/writes DynamoDB
+# - API Gateway (HTTP API): exposes HTTPS endpoints that call the Lambda
+# - S3 bucket (static website hosting): hosts a simple front-end page
+#
+# How requests flow:
+# Browser -> API Gateway route (e.g., GET /videos) -> Lambda -> DynamoDB
+#
+# Notes for novices:
+# - CloudFormation "Parameters" let you customize names at deploy time.
+# - "Resources" are the actual AWS services created.
+# - "Outputs" print useful values after the stack finishes (URLs, names).
+#
+# Safety note:
+# - This template configures the S3 bucket for *public* website access.
+#   That’s expected for a static site demo, but don’t use it for sensitive data.
+# ==============================================================================
+Description: 'Video Library - DynamoDB, Lambda, API Gateway, and S3 Static Website'
+
+Parameters:
+  # ---------------------------------------------------------------------------
+  # DynamoDB settings
+  # ---------------------------------------------------------------------------
+  TableName:
+    Type: String
+    Default: VideoLibrary
+    Description: Name of the DynamoDB table (where app data is stored)
+  
+  PrimaryKeyName:
+    Type: String
+    Default: pk
+    Description: Name of the DynamoDB partition key attribute (the "main ID" field)
+  
+  # ---------------------------------------------------------------------------
+  # S3 (static website) settings
+  # ---------------------------------------------------------------------------
+  S3BucketName:
+    Type: String
+    Description: Name for the S3 bucket (must be globally unique across ALL AWS accounts)
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # DynamoDB Table
+  # ---------------------------------------------------------------------------
+  # This table uses a "composite key":
+  # - Partition key: !Ref PrimaryKeyName (default: pk)
+  # - Sort key: sk
+  #
+  # IMPORTANT (common beginner pitfall):
+  # - DynamoDB "GetItem" and "PutItem" must use the *exact* key attribute names
+  #   defined here (partition key + sort key).
+  # - The inline Lambda code below currently uses a `videoId` key in a few places.
+  #   For this stack to work, you should either:
+  #   - change the Lambda to use `sk` as the sort key, OR
+  #   - change the table's sort key name from `sk` to `videoId`.
+  #
+  # Why composite keys?
+  # - It lets you store multiple record types in one table (common DynamoDB pattern),
+  #   e.g. pk="VIDEO#123", sk="META" or pk="PROGRESS#user1", sk="videoId".
+  VideoLibraryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      # PAY_PER_REQUEST = on-demand billing: you don’t provision read/write capacity.
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: !Ref PrimaryKeyName
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: !Ref PrimaryKeyName
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      Tags:
+        - Key: Application
+          Value: VideoLibrary
+
+  # ---------------------------------------------------------------------------
+  # IAM Role for Lambda
+  # ---------------------------------------------------------------------------
+  # Lambda needs permissions to:
+  # - write logs to CloudWatch (AWSLambdaBasicExecutionRole managed policy)
+  # - access this DynamoDB table (inline policy below)
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                # Restrict access to only this table (good practice).
+                Resource: !GetAtt VideoLibraryTable.Arn
+
+  # ---------------------------------------------------------------------------
+  # Lambda Function (the backend "API")
+  # ---------------------------------------------------------------------------
+  # This is a simple "inline" Lambda defined directly in the template.
+  # For bigger projects, you typically package and deploy Lambda code separately.
+  VideoLibraryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: VideoLibraryAPI
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          # These environment variables tell the function which DynamoDB table/key to use.
+          TABLE_NAME: !Ref TableName
+          PRIMARY_KEY: !Ref PrimaryKeyName
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamodb = new AWS.DynamoDB.DocumentClient();
+          const TABLE_NAME = process.env.TABLE_NAME || 'VideoLibrary';
+          const PRIMARY_KEY = process.env.PRIMARY_KEY || 'pk';
+          
+          exports.handler = async (event) => {
+              // CORS + JSON headers so a browser app can call this API.
+              const headers = {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Headers': 'Content-Type',
+                  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+              };
+              
+              if (event.httpMethod === 'OPTIONS') {
+                  // Browsers send OPTIONS "preflight" requests for CORS. We answer quickly.
+                  return { statusCode: 200, headers, body: '' };
+              }
+              
+              try {
+                  const path = event.path || event.resource;
+                  const queryParams = event.queryStringParameters || {};
+                  const httpMethod = event.httpMethod || event.requestContext?.http?.method;
+                  
+                  // Progress tracking endpoints
+                  if (path.includes('/progress')) {
+                      if (httpMethod === 'GET') {
+                          // GET /progress?userId=...&videoId=...
+                          const { userId, videoId } = queryParams;
+                          if (!userId || !videoId) {
+                              return {
+                                  statusCode: 400,
+                                  headers,
+                                  body: JSON.stringify({ error: 'userId and videoId required' })
+                              };
+                          }
+                          
+                          const progressKey = `PROGRESS#${userId}`;
+                          const result = await dynamodb.get({
+                              TableName: TABLE_NAME,
+                              Key: { [PRIMARY_KEY]: progressKey, videoId: videoId }
+                          }).promise();
+                          
+                          return {
+                              statusCode: 200,
+                              headers,
+                              body: JSON.stringify(result.Item || { currentTime: 0, completed: false })
+                          };
+                      } else if (httpMethod === 'POST') {
+                          // POST /progress with JSON body: { userId, videoId, currentTime, ... }
+                          const body = JSON.parse(event.body || '{}');
+                          const { userId, videoId, currentTime, timestamp, completed } = body;
+                          
+                          if (!userId || !videoId || currentTime === undefined) {
+                              return {
+                                  statusCode: 400,
+                                  headers,
+                                  body: JSON.stringify({ error: 'userId, videoId, currentTime required' })
+                              };
+                          }
+                          
+                          const progressKey = `PROGRESS#${userId}`;
+                          await dynamodb.put({
+                              TableName: TABLE_NAME,
+                              Item: {
+                                  [PRIMARY_KEY]: progressKey,
+                                  videoId: videoId,
+                                  userId: userId,
+                                  currentTime: currentTime,
+                                  timestamp: timestamp || new Date().toISOString(),
+                                  completed: completed || false,
+                                  lastUpdated: new Date().toISOString()
+                              }
+                          }).promise();
+                          
+                          return {
+                              statusCode: 200,
+                              headers,
+                              body: JSON.stringify({ success: true, currentTime: currentTime })
+                          };
+                      }
+                  }
+                  
+                  // Video listing endpoints
+                  if (path.includes('/scan')) {
+                      // GET /scan
+                      // DynamoDB Scan reads the whole table (fine for demos, not ideal at scale).
+                      const pk = queryParams.pk;
+                      const params = { TableName: TABLE_NAME };
+                      
+                      if (pk) {
+                          params.FilterExpression = `${PRIMARY_KEY} = :pk`;
+                          params.ExpressionAttributeValues = { ':pk': pk };
+                      }
+                      
+                      const result = await dynamodb.scan(params).promise();
+                      return {
+                          statusCode: 200,
+                          headers,
+                          body: JSON.stringify({
+                              items: result.Items,
+                              count: result.Count
+                          })
+                      };
+                  } else {
+                      // GET /videos?pk=...
+                      // Fetch one item by primary key.
+                      const pk = queryParams.pk;
+                      if (!pk) {
+                          return {
+                              statusCode: 400,
+                              headers,
+                              body: JSON.stringify({ error: 'pk parameter required' })
+                          };
+                      }
+                      
+                      const params = {
+                          TableName: TABLE_NAME,
+                          Key: { [PRIMARY_KEY]: pk }
+                      };
+                      
+                      const result = await dynamodb.get(params).promise();
+                      return {
+                          statusCode: result.Item ? 200 : 404,
+                          headers,
+                          body: JSON.stringify(result.Item || { error: 'Not found' })
+                      };
+                  }
+              } catch (error) {
+                  return {
+                      statusCode: 500,
+                      headers,
+                      body: JSON.stringify({ error: error.message })
+                  };
+              }
+          };
+
+  # ---------------------------------------------------------------------------
+  # API Gateway (HTTP API)
+  # ---------------------------------------------------------------------------
+  # This creates a public HTTPS API with CORS enabled, so a browser can call it.
+  VideoLibraryAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: VideoLibraryAPI
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+
+  # ---------------------------------------------------------------------------
+  # API Gateway -> Lambda integration
+  # ---------------------------------------------------------------------------
+  # AWS_PROXY means API Gateway forwards the HTTP request to Lambda and uses
+  # Lambda’s response as the HTTP response.
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref VideoLibraryAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt VideoLibraryFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # ---------------------------------------------------------------------------
+  # API Routes (endpoints)
+  # ---------------------------------------------------------------------------
+  # Each route maps an HTTP method + path to the Lambda integration.
+  ScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VideoLibraryAPI
+      RouteKey: 'GET /scan'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  GetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VideoLibraryAPI
+      RouteKey: 'GET /videos'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  # Progress tracking routes
+  GetProgressRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VideoLibraryAPI
+      RouteKey: 'GET /progress'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  SaveProgressRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VideoLibraryAPI
+      RouteKey: 'POST /progress'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  # ---------------------------------------------------------------------------
+  # API Stage
+  # ---------------------------------------------------------------------------
+  # Stages are like "environments" (dev/test/prod). AutoDeploy=true publishes
+  # changes automatically when the stack updates.
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref VideoLibraryAPI
+      StageName: prod
+      AutoDeploy: true
+
+  # ---------------------------------------------------------------------------
+  # Permission: allow API Gateway to call the Lambda
+  # ---------------------------------------------------------------------------
+  ApiGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref VideoLibraryFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${VideoLibraryAPI}/*/*'
+
+  # ---------------------------------------------------------------------------
+  # S3 Bucket (Static Website Hosting)
+  # ---------------------------------------------------------------------------
+  # WebsiteConfiguration turns on static website hosting and defines which file
+  # S3 should serve for "/" (IndexDocument) and for errors.
+  StaticWebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      WebsiteConfiguration:
+        IndexDocument: video-library.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        # These 4 settings are set to "false" to allow public access.
+        # For production workloads, you usually keep these "true" and use CloudFront/OAC.
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  # ---------------------------------------------------------------------------
+  # S3 Bucket Policy (public read)
+  # ---------------------------------------------------------------------------
+  # This policy allows anyone on the internet to GET objects in the bucket,
+  # which is required for public static website hosting.
+  StaticWebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticWebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${StaticWebsiteBucket.Arn}/*'
+
+Outputs:
+  # ---------------------------------------------------------------------------
+  # Outputs (shown after stack creation)
+  # ---------------------------------------------------------------------------
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${VideoLibraryAPI}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  WebsiteURL:
+    Description: S3 Website URL
+    Value: !GetAtt StaticWebsiteBucket.WebsiteURL
+    Export:
+      Name: !Sub '${AWS::StackName}-WebsiteURL'
+
+  DynamoDBTableName:
+    Description: DynamoDB Table Name
+    Value: !Ref VideoLibraryTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TableName'
+
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref StaticWebsiteBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'

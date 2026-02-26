@@ -1,0 +1,1 @@
+Multi-table measurement: define timing method, whether this is end-to-end API latency, sum/aggregation to be measured as API roundtrip latency from start of 1st call to the end of 10th call each retrieving 10 items for 100 keys. of multiple underlying queries?

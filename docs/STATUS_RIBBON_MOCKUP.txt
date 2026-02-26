@@ -1,0 +1,204 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                        STATUS RIBBON VISUAL MOCKUP                            ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                          VIDEO LIBRARY INTERFACE                              │
+│                                                                               │
+│  [Video Player Section]                                                       │
+│  [Continue Watching Section]                                                  │
+│  [Library Section]                                                            │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+════════════════════════════════════════════════════════════════════════════════
+                              STATUS RIBBON (FIXED BOTTOM)
+────────────────────────────────────────────────────────────────────────────────
+● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation: 
+POST progress [video-001] | Response Time: 145ms | Total Requests: 23 | 
+Avg Response: 167ms
+════════════════════════════════════════════════════════════════════════════════
+
+COMPONENT BREAKDOWN:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ●  API: abc123.execute-api.us-east-1.amazonaws.com/prod                    │
+│ ▲  ▲                                                                         │
+│ │  └─ Endpoint (light blue)                                                │
+│ └─ Status Indicator (green = active, gray = idle, red = error)             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Last Operation: POST progress [video-001]                                   │
+│                 ▲                 ▲                                          │
+│                 │                 └─ Video ID                               │
+│                 └─ Operation type (light cyan, italic)                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Response Time: 145ms                                                         │
+│                ▲                                                             │
+│                └─ Color coded: Green (<200ms), Orange (200-500ms),         │
+│                   Red (>500ms)                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Total Requests: 23    |    Avg Response: 167ms                              │
+│                 ▲                          ▲                                 │
+│                 │                          └─ Also color coded              │
+│                 └─ Cumulative count (green)                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+STATUS INDICATOR STATES:
+
+┌──────────────┬──────────────┬──────────────┬──────────────────────────────┐
+│   State      │    Color     │  Animation   │         When                 │
+├──────────────┼──────────────┼──────────────┼──────────────────────────────┤
+│ Idle         │ Gray         │ None         │ Default, no activity         │
+│ Active       │ Green        │ Pulse (2s)   │ During API call              │
+│ Error        │ Red          │ Pulse (1s)   │ API call failed              │
+└──────────────┴──────────────┴──────────────┴──────────────────────────────┘
+
+
+RESPONSE TIME COLOR CODING:
+
+┌──────────────┬──────────────┬──────────────────────────────────────────────┐
+│   Range      │    Color     │         Meaning                              │
+├──────────────┼──────────────┼──────────────────────────────────────────────┤
+│ 0-199ms      │ Green        │ Excellent performance                        │
+│ 200-499ms    │ Orange       │ Acceptable performance                       │
+│ 500ms+       │ Red          │ Poor performance, needs attention            │
+└──────────────┴──────────────┴──────────────────────────────────────────────┘
+
+
+EXAMPLE STATES:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. INITIAL STATE (No API configured)                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: Not configured | Last Operation: None | Response Time: -- |         │
+│ Total Requests: 0 | Avg Response: --                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. LOADING VIDEOS                                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ SCAN videos | Response Time: 178ms | Total Requests: 1 | Avg Response:     │
+│ 178ms                                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. LOADING PROGRESS DATA (Multiple calls)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ GET progress [video-003] | Response Time: 92ms | Total Requests: 4 |       │
+│ Avg Response: 125ms                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 4. PLAYING VIDEO (Saving progress every 3 seconds)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ POST progress [video-001] | Response Time: 145ms | Total Requests: 23 |    │
+│ Avg Response: 167ms                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 5. GOOD PERFORMANCE (Fast responses)                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ POST progress [video-002] | Response Time: 87ms | Total Requests: 45 |     │
+│ Avg Response: 112ms                                                         │
+│                              ▲ GREEN            ▲ GREEN                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 6. MEDIUM PERFORMANCE (Acceptable)                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ GET progress [video-005] | Response Time: 345ms | Total Requests: 67 |     │
+│ Avg Response: 289ms                                                         │
+│                             ▲ ORANGE            ▲ ORANGE                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 7. POOR PERFORMANCE (Slow - needs attention)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ SCAN videos | Response Time: 1234ms | Total Requests: 89 |                 │
+│ Avg Response: 567ms                                                         │
+│                        ▲ RED               ▲ RED                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 8. ERROR STATE                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ POST progress [video-001] (ERROR) | Response Time: 5234ms |                │
+│ Total Requests: 24 | Avg Response: 189ms                                   │
+│ ▲ RED (pulsing)                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+MOBILE RESPONSIVE LAYOUT:
+
+Desktop (wide):
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ● API: abc123.execute-api.us-east-1.amazonaws.com/prod | Last Operation:   │
+│ POST progress [video-001] | Response Time: 145ms | Total: 23 | Avg: 167ms  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Mobile (narrow):
+┌───────────────────────────────────────────┐
+│ ● API: abc123...com/prod                  │
+│ Last Op: POST progress [video-001]        │
+│ Response: 145ms  Total: 23  Avg: 167ms    │
+└───────────────────────────────────────────┘
+(Separators hidden, text smaller, endpoint truncated)
+
+
+REAL-TIME UPDATE SEQUENCE (Video Playing):
+
+T=0s:
+● API: abc...com/prod | Last: POST progress [video-001] | Time: 152ms | 
+Total: 15 | Avg: 178ms
+
+T=3s:
+● API: abc...com/prod | Last: POST progress [video-001] | Time: 148ms | 
+Total: 16 | Avg: 176ms
+
+T=6s:
+● API: abc...com/prod | Last: POST progress [video-001] | Time: 156ms | 
+Total: 17 | Avg: 175ms
+
+T=9s:
+● API: abc...com/prod | Last: POST progress [video-001] | Time: 143ms | 
+Total: 18 | Avg: 173ms
+
+(Updates continue every 3 seconds while video plays)
+
+
+KEY FEATURES:
+
+✓ Fixed position at bottom of screen
+✓ Dark gradient background for contrast
+✓ Monospace font for technical data
+✓ Color-coded response times
+✓ Real-time updates during all operations
+✓ Pulsing indicator shows active state
+✓ Rolling average of last 100 requests
+✓ Responsive design for mobile
+✓ High z-index (1000) stays on top
+✓ Non-intrusive but always visible
+
+TECHNICAL DETAILS:
+
+- Uses performance.now() for accurate timing
+- Tracks all fetch() calls via wrapper function
+- Maintains rolling window of 100 response times
+- Updates DOM immediately after each API call
+- CSS animations for status indicator
+- Ellipsis overflow for long endpoints
+- Title attribute shows full URL on hover
