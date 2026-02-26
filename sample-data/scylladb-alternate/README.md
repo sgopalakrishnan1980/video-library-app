@@ -67,6 +67,7 @@ Each video includes:
 ### Method 1: Using AWS CLI (Recommended)
 
 ```bash
+# Replace us-east-1 with your target region (e.g., eu-west-1, ap-south-1)
 aws dynamodb batch-write-item \
   --request-items file://scylladb-batch-write-items.json \
   --region us-east-1
@@ -81,8 +82,11 @@ Replace the sample data files in your deployment:
 cp scylladb-sample-data.json sample-data/sample-data.json
 cp scylladb-batch-write-items.json sample-data/batch-write-items.json
 
-# Then deploy
+# Deploy (default: us-east-1)
 ./scripts/deploy.sh
+
+# Or deploy to a specific region
+./scripts/deploy.sh --region eu-west-1
 ```
 
 ### Method 3: Manual DynamoDB Console
@@ -156,20 +160,24 @@ ffprobe -v error -show_entries format=duration \
 ### Step 4: Reload Data
 
 ```bash
+REGION=us-east-1  # Use your deployment region
+
 # Clear existing data
 aws dynamodb scan --table-name VideoLibrary \
   --attributes-to-get "pk" "videoId" \
   --query "Items[*].[pk.S,videoId.S]" \
-  --output text | \
+  --output text --region $REGION | \
 while read pk videoId; do
   aws dynamodb delete-item \
     --table-name VideoLibrary \
-    --key "{\"pk\":{\"S\":\"$pk\"},\"videoId\":{\"S\":\"$videoId\"}}"
+    --key "{\"pk\":{\"S\":\"$pk\"},\"videoId\":{\"S\":\"$videoId\"}}" \
+    --region $REGION
 done
 
 # Load new data
 aws dynamodb batch-write-item \
-  --request-items file://scylladb-batch-write-items.json
+  --request-items file://scylladb-batch-write-items.json \
+  --region $REGION
 ```
 
 ## Adding More Videos
@@ -183,13 +191,14 @@ aws dynamodb put-item \
     "pk": {"S": "Library"},
     "videoId": {"S": "mss-013"},
     "title": {"S": "Your Video Title"},
-    "link": {"S": "https://your-video-url.mp4"},
+    "link": {"S": "https://www.youtube.com/watch?v=VIDEO_ID"},
     "description": {"S": "Video description"},
     "duration": {"S": "15:30"},
     "uploadDate": {"S": "2024-10-17"},
     "category": {"S": "Technical Deep Dive"},
     "speaker": {"S": "Speaker Name - Title, Company"}
-  }'
+  }' \
+  --region us-east-1
 ```
 
 ## Video Categories Reference
@@ -212,20 +221,22 @@ When adding new videos, use these standardized categories:
 After loading:
 
 ```bash
-# Verify data loaded
-aws dynamodb scan --table-name VideoLibrary --select COUNT
+# Verify data loaded (add --region YOUR_REGION to all commands)
+aws dynamodb scan --table-name VideoLibrary --select COUNT --region us-east-1
 
 # List all videos
 aws dynamodb scan \
   --table-name VideoLibrary \
   --filter-expression "pk = :pk" \
   --expression-attribute-values '{":pk":{"S":"Library"}}' \
-  --projection-expression "videoId, title, speaker"
+  --projection-expression "videoId, title, speaker" \
+  --region us-east-1
 
 # Get specific video
 aws dynamodb get-item \
   --table-name VideoLibrary \
-  --key '{"pk":{"S":"Library"},"videoId":{"S":"mss-001"}}'
+  --key '{"pk":{"S":"Library"},"videoId":{"S":"mss-001"}}' \
+  --region us-east-1
 ```
 
 ## ScyllaDB Context

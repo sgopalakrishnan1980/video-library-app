@@ -19,39 +19,71 @@ This solution provides a static web page hosted on S3 that connects to DynamoDB 
 - AWS CLI configured with appropriate credentials
 - Permissions to create: S3, DynamoDB, Lambda, API Gateway, IAM roles
 
+## Region Selection
+
+All resources (DynamoDB, Lambda, API Gateway, S3) are deployed to a single AWS region. Specify the region via:
+
+- **Deploy script:** `./scripts/deploy.sh --region eu-west-1`
+- **Environment variable:** `AWS_REGION=ap-south-1 ./scripts/deploy.sh`
+- **AWS CLI:** `--region <region>` on each command
+
+Replace `us-east-1` in the examples below with your chosen region (e.g., `eu-west-1`, `ap-south-1`).
+
 ## Deployment Methods
 
-### Method 1: CloudFormation (Recommended)
+### Method 1: Deploy Script (Recommended)
+
+One-command deployment with region support:
+
+```bash
+# Deploy to default region (us-east-1)
+./scripts/deploy.sh
+
+# Deploy to a specific region
+./scripts/deploy.sh --region eu-west-1
+./scripts/deploy.sh -r ap-south-1
+
+# Or use environment variable
+AWS_REGION=eu-central-1 ./scripts/deploy.sh
+```
+
+### Method 2: CloudFormation (Manual)
 
 1. **Deploy the stack:**
 ```bash
+REGION=us-east-1  # or eu-west-1, ap-south-1, etc.
+
 aws cloudformation create-stack \
   --stack-name video-library \
-  --template-body file://cloudformation-template.yaml \
+  --template-body file://infrastructure/cloudformation-template.yaml \
   --parameters ParameterKey=S3BucketName,ParameterValue=my-video-library-bucket-12345 \
   --capabilities CAPABILITY_IAM \
-  --region us-east-1
+  --region $REGION
 ```
 
 2. **Wait for stack creation:**
 ```bash
 aws cloudformation wait stack-create-complete \
   --stack-name video-library \
-  --region us-east-1
+  --region $REGION
 ```
 
 3. **Get outputs:**
 ```bash
 aws cloudformation describe-stacks \
   --stack-name video-library \
-  --region us-east-1 \
+  --region $REGION \
   --query 'Stacks[0].Outputs'
 ```
 
-### Method 2: Manual Setup
+### Method 3: Manual Setup
+
+Use `$REGION` or replace with your target region (e.g., `us-east-1`, `eu-west-1`).
 
 #### Step 1: Create DynamoDB Table
 ```bash
+REGION=us-east-1  # Set your target region
+
 aws dynamodb create-table \
   --table-name VideoLibrary \
   --attribute-definitions \
@@ -61,7 +93,7 @@ aws dynamodb create-table \
     AttributeName=pk,KeyType=HASH \
     AttributeName=videoId,KeyType=RANGE \
   --billing-mode PAY_PER_REQUEST \
-  --region us-east-1
+  --region $REGION
 ```
 
 #### Step 2: Load Sample Data
@@ -75,7 +107,7 @@ aws dynamodb put-item \
     "title": {"S": "Introduction to AWS"},
     "link": {"S": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"}
   }' \
-  --region us-east-1
+  --region $REGION
 
 # Repeat for other videos...
 ```
@@ -83,8 +115,8 @@ aws dynamodb put-item \
 Or use batch write:
 ```bash
 aws dynamodb batch-write-item \
-  --request-items file://batch-write-items.json \
-  --region us-east-1
+  --request-items file://sample-data/batch-write-items.json \
+  --region $REGION
 ```
 
 #### Step 3: Create Lambda Function
@@ -112,18 +144,18 @@ aws iam attach-role-policy \
 aws iam put-role-policy \
   --role-name VideoLibraryLambdaRole \
   --policy-name DynamoDBAccess \
-  --policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:Scan",
-        "dynamodb:Query"
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Effect\": \"Allow\",
+      \"Action\": [
+        \"dynamodb:GetItem\",
+        \"dynamodb:Scan\",
+        \"dynamodb:Query\"
       ],
-      "Resource": "arn:aws:dynamodb:us-east-1:*:table/VideoLibrary"
+      \"Resource\": \"arn:aws:dynamodb:${REGION}:*:table/VideoLibrary\"
     }]
-  }'
+  }"
 ```
 
 3. **Create deployment package:**
@@ -140,7 +172,7 @@ aws lambda create-function \
   --handler lambda-function.handler \
   --zip-file fileb://lambda-function.zip \
   --environment Variables={TABLE_NAME=VideoLibrary,PRIMARY_KEY=pk} \
-  --region us-east-1
+  --region $REGION
 ```
 
 #### Step 4: Create API Gateway
@@ -151,7 +183,7 @@ aws apigatewayv2 create-api \
   --name VideoLibraryAPI \
   --protocol-type HTTP \
   --cors-configuration AllowOrigins="*",AllowMethods="GET,OPTIONS",AllowHeaders="*" \
-  --region us-east-1
+  --region $REGION
 ```
 
 2. **Create integration:**
@@ -159,9 +191,9 @@ aws apigatewayv2 create-api \
 aws apigatewayv2 create-integration \
   --api-id YOUR_API_ID \
   --integration-type AWS_PROXY \
-  --integration-uri arn:aws:lambda:us-east-1:YOUR_ACCOUNT_ID:function:VideoLibraryAPI \
+  --integration-uri arn:aws:lambda:${REGION}:YOUR_ACCOUNT_ID:function:VideoLibraryAPI \
   --payload-format-version 2.0 \
-  --region us-east-1
+  --region $REGION
 ```
 
 3. **Create routes:**
@@ -171,14 +203,14 @@ aws apigatewayv2 create-route \
   --api-id YOUR_API_ID \
   --route-key "GET /scan" \
   --target integrations/YOUR_INTEGRATION_ID \
-  --region us-east-1
+  --region $REGION
 
 # Get route
 aws apigatewayv2 create-route \
   --api-id YOUR_API_ID \
   --route-key "GET /videos" \
   --target integrations/YOUR_INTEGRATION_ID \
-  --region us-east-1
+  --region $REGION
 ```
 
 4. **Create stage:**
@@ -187,7 +219,7 @@ aws apigatewayv2 create-stage \
   --api-id YOUR_API_ID \
   --stage-name prod \
   --auto-deploy \
-  --region us-east-1
+  --region $REGION
 ```
 
 5. **Grant API Gateway permission to invoke Lambda:**
@@ -197,15 +229,15 @@ aws lambda add-permission \
   --statement-id apigateway-invoke \
   --action lambda:InvokeFunction \
   --principal apigateway.amazonaws.com \
-  --source-arn "arn:aws:execute-api:us-east-1:YOUR_ACCOUNT_ID:YOUR_API_ID/*/*" \
-  --region us-east-1
+  --source-arn "arn:aws:execute-api:${REGION}:YOUR_ACCOUNT_ID:YOUR_API_ID/*/*" \
+  --region $REGION
 ```
 
 #### Step 5: Create S3 Bucket and Deploy Website
 
 1. **Create bucket:**
 ```bash
-aws s3 mb s3://my-video-library-bucket-12345 --region us-east-1
+aws s3 mb s3://my-video-library-bucket-12345 --region $REGION
 ```
 
 2. **Enable static website hosting:**
@@ -246,8 +278,8 @@ aws s3api delete-public-access-block \
 
 After deployment, configure the web page:
 
-1. Open the S3 website URL: `http://my-video-library-bucket-12345.s3-website-us-east-1.amazonaws.com`
-2. Enter your API Gateway endpoint: `https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/prod`
+1. Open the S3 website URL: `http://my-video-library-bucket-12345.s3-website-YOUR_REGION.amazonaws.com`
+2. Enter your API Gateway endpoint: `https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com/prod`
 3. Enter primary key: `Library`
 4. Click "Save Configuration"
 5. Click "Load Videos"
@@ -289,7 +321,7 @@ aws dynamodb scan \
   --table-name VideoLibrary \
   --filter-expression "pk = :pk" \
   --expression-attribute-values '{":pk":{"S":"Library"}}' \
-  --region us-east-1
+  --region $REGION
 ```
 
 ### Test Lambda
@@ -302,14 +334,14 @@ aws lambda invoke \
     "queryStringParameters": {"pk": "Library"}
   }' \
   response.json \
-  --region us-east-1
+  --region $REGION
 
 cat response.json
 ```
 
 ### Test API
 ```bash
-curl "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/prod/scan?pk=Library"
+curl "https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com/prod/scan?pk=Library"
 ```
 
 ## Adding Your Own Videos
@@ -334,7 +366,7 @@ aws dynamodb put-item \
     "title": {"S": "My Custom Video"},
     "link": {"S": "https://your-video-url.mp4"}
   }' \
-  --region us-east-1
+  --region $REGION
 ```
 
 ### Option 3: Using Your Own S3 Videos
@@ -409,22 +441,22 @@ For best compatibility, use MP4 with H.264 codec.
 ```bash
 aws cloudformation delete-stack \
   --stack-name video-library \
-  --region us-east-1
+  --region $REGION
 ```
 
 ### Manual:
 ```bash
-# Delete S3 bucket
+# Delete S3 bucket (add --region if bucket is in a specific region)
 aws s3 rb s3://my-video-library-bucket-12345 --force
 
 # Delete API Gateway
-aws apigatewayv2 delete-api --api-id YOUR_API_ID
+aws apigatewayv2 delete-api --api-id YOUR_API_ID --region $REGION
 
 # Delete Lambda
-aws lambda delete-function --function-name VideoLibraryAPI
+aws lambda delete-function --function-name VideoLibraryAPI --region $REGION
 
 # Delete DynamoDB table
-aws dynamodb delete-table --table-name VideoLibrary
+aws dynamodb delete-table --table-name VideoLibrary --region $REGION
 
 # Delete IAM role
 aws iam delete-role --role-name VideoLibraryLambdaRole

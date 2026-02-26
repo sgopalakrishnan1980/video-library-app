@@ -149,13 +149,13 @@ Resources:
                   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
               };
               
-              if (event.httpMethod === 'OPTIONS') {
-                  // Browsers send OPTIONS "preflight" requests for CORS. We answer quickly.
+              if (event.httpMethod === 'OPTIONS' || event.requestContext?.http?.method === 'OPTIONS') {
                   return { statusCode: 200, headers, body: '' };
               }
               
               try {
-                  const path = event.path || event.resource;
+                  // HTTP API payload 2.0 uses rawPath; REST API uses path
+                  const path = (event.rawPath || event.path || event.resource || '').toString();
                   const queryParams = event.queryStringParameters || {};
                   const httpMethod = event.httpMethod || event.requestContext?.http?.method;
                   
@@ -175,7 +175,7 @@ Resources:
                           const progressKey = `PROGRESS#${userId}`;
                           const result = await dynamodb.get({
                               TableName: TABLE_NAME,
-                              Key: { [PRIMARY_KEY]: progressKey, videoId: videoId }
+                              Key: { [PRIMARY_KEY]: progressKey, sk: videoId }
                           }).promise();
                           
                           return {
@@ -201,8 +201,9 @@ Resources:
                               TableName: TABLE_NAME,
                               Item: {
                                   [PRIMARY_KEY]: progressKey,
-                                  videoId: videoId,
-                                  userId: userId,
+                                  sk: videoId,
+                                  userId,
+                                  videoId,
                                   currentTime: currentTime,
                                   timestamp: timestamp || new Date().toISOString(),
                                   completed: completed || false,
@@ -220,17 +221,14 @@ Resources:
                   
                   // Video listing endpoints
                   if (path.includes('/scan')) {
-                      // GET /scan
-                      // DynamoDB Scan reads the whole table (fine for demos, not ideal at scale).
-                      const pk = queryParams.pk;
-                      const params = { TableName: TABLE_NAME };
-                      
-                      if (pk) {
-                          params.FilterExpression = `${PRIMARY_KEY} = :pk`;
-                          params.ExpressionAttributeValues = { ':pk': pk };
-                      }
-                      
-                      const result = await dynamodb.scan(params).promise();
+                      // GET /scan - list items by partition key (use Query when pk provided)
+                      const pk = queryParams.pk || 'Library';
+                      const params = {
+                          TableName: TABLE_NAME,
+                          KeyConditionExpression: `${PRIMARY_KEY} = :pk`,
+                          ExpressionAttributeValues: { ':pk': pk }
+                      };
+                      const result = await dynamodb.query(params).promise();
                       return {
                           statusCode: 200,
                           headers,
@@ -239,28 +237,31 @@ Resources:
                               count: result.Count
                           })
                       };
-                  } else {
-                      // GET /videos?pk=...
-                      // Fetch one item by primary key.
+                  } else if (path.includes('/videos')) {
+                      // GET /videos?pk=...&sk=... - fetch one item by full primary key
                       const pk = queryParams.pk;
-                      if (!pk) {
+                      const sk = queryParams.sk;
+                      if (!pk || !sk) {
                           return {
                               statusCode: 400,
                               headers,
-                              body: JSON.stringify({ error: 'pk parameter required' })
+                              body: JSON.stringify({ error: 'pk and sk parameters required' })
                           };
                       }
-                      
-                      const params = {
+                      const result = await dynamodb.get({
                           TableName: TABLE_NAME,
-                          Key: { [PRIMARY_KEY]: pk }
-                      };
-                      
-                      const result = await dynamodb.get(params).promise();
+                          Key: { [PRIMARY_KEY]: pk, sk: sk }
+                      }).promise();
                       return {
                           statusCode: result.Item ? 200 : 404,
                           headers,
                           body: JSON.stringify(result.Item || { error: 'Not found' })
+                      };
+                  } else {
+                      return {
+                          statusCode: 404,
+                          headers,
+                          body: JSON.stringify({ error: 'Not Found', message: 'Route not found' })
                       };
                   }
               } catch (error) {
@@ -335,6 +336,17 @@ Resources:
     Properties:
       ApiId: !Ref VideoLibraryAPI
       RouteKey: 'POST /progress'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  # Catch-all route: sends ALL requests (including /prod/scan) to Lambda.
+  # API Gateway returns {"message":"Not Found"} when no route matches - the
+  # request path may include the stage (e.g. /prod/scan), so $default ensures
+  # we receive every request and can route by path in Lambda.
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VideoLibraryAPI
+      RouteKey: '$default'
       Target: !Sub 'integrations/${ApiIntegration}'
 
   # ---------------------------------------------------------------------------

@@ -9,10 +9,51 @@ set -e  # Exit on error
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
-# Configuration
-REGION=${AWS_REGION:-us-east-1}
+# Parse command-line arguments
+REGION=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -r|--region)
+      if [[ -z "${2:-}" ]]; then
+        echo "ERROR: --region requires a value"
+        exit 1
+      fi
+      REGION="$2"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: $0 [OPTIONS]"
+      echo ""
+      echo "Deploy the video library application to AWS."
+      echo ""
+      echo "Options:"
+      echo "  -r, --region REGION   AWS region to deploy to (default: us-east-1)"
+      echo "  -h, --help            Show this help message"
+      echo ""
+      echo "Environment variables:"
+      echo "  AWS_REGION    Same as --region (overridden by --region)"
+      echo "  STACK_NAME   CloudFormation stack name (default: video-library)"
+      echo "  BUCKET_NAME  S3 bucket name (default: video-library-<timestamp>-<region>)"
+      echo "  TABLE_NAME   DynamoDB table name (default: VideoLibrary)"
+      echo ""
+      echo "Examples:"
+      echo "  $0                          # Deploy to us-east-1"
+      echo "  $0 --region eu-west-1      # Deploy to eu-west-1"
+      echo "  $0 -r ap-south-1           # Deploy to ap-south-1"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Use --help for usage information"
+      exit 1
+      ;;
+  esac
+done
+
+# Configuration (CLI arg overrides env var overrides default)
+REGION=${REGION:-${AWS_REGION:-us-east-1}}
 STACK_NAME=${STACK_NAME:-video-library}
-BUCKET_NAME=${BUCKET_NAME:-video-library-$(date +%s)}
+BUCKET_NAME=${BUCKET_NAME:-video-library-$(date +%s)-${REGION}}
 TABLE_NAME=${TABLE_NAME:-VideoLibrary}
 
 echo "=================================================="
@@ -42,19 +83,26 @@ if ! aws sts get-caller-identity &> /dev/null; then
 fi
 
 echo "Step 1: Building Lambda deployment package..."
+cd "$PROJECT_ROOT"
+# Node.js 18 Lambda does NOT include aws-sdk v2 - only v3. We must bundle @aws-sdk/* deps.
+npm install --omit=dev --no-package-lock 2>/dev/null || npm install --production 2>/dev/null || true
 cd "$PROJECT_ROOT/src"
 if [ -f lambda-function.zip ]; then
     rm lambda-function.zip
 fi
-zip -q lambda-function.zip lambda-function.js
-echo "✓ Lambda package created"
+# Zip: index.js at root + node_modules (AWS SDK v3 for DynamoDB)
+zip -rq lambda-function.zip index.js -x "*.git*"
+if [ -d "$PROJECT_ROOT/node_modules" ]; then
+    cd "$PROJECT_ROOT" && zip -rq src/lambda-function.zip node_modules -x "*.git*" && cd src
+fi
+echo "✓ Lambda package created (index.js + @aws-sdk/* for Node.js 18)"
 echo ""
 
 echo "Step 2: Uploading Lambda package to S3 (temporary)..."
 # We need to upload Lambda to S3 first for CloudFormation
 LAMBDA_BUCKET="lambda-deploy-temp-$(date +%s)"
 aws s3 mb s3://$LAMBDA_BUCKET --region $REGION 2>/dev/null || true
-aws s3 cp lambda-function.zip s3://$LAMBDA_BUCKET/lambda-function.zip
+aws s3 cp lambda-function.zip s3://$LAMBDA_BUCKET/lambda-function.zip --region $REGION
 echo "✓ Lambda uploaded to s3://$LAMBDA_BUCKET/lambda-function.zip"
 echo ""
 
@@ -66,21 +114,37 @@ echo "✓ Template is valid"
 echo ""
 
 echo "Step 4: Deploying CloudFormation stack..."
-aws cloudformation create-stack \
-    --stack-name $STACK_NAME \
-    --template-body file://$PROJECT_ROOT/infrastructure/cloudformation-template.yaml \
-    --parameters \
-        ParameterKey=S3BucketName,ParameterValue=$BUCKET_NAME \
-        ParameterKey=TableName,ParameterValue=$TABLE_NAME \
-    --capabilities CAPABILITY_IAM \
-    --region $REGION
+if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION &>/dev/null; then
+    echo "Stack exists - updating..."
+    aws cloudformation update-stack \
+        --stack-name $STACK_NAME \
+        --template-body file://$PROJECT_ROOT/infrastructure/cloudformation-template.yaml \
+        --parameters \
+            ParameterKey=S3BucketName,UsePreviousValue=true \
+            ParameterKey=TableName,UsePreviousValue=true \
+        --capabilities CAPABILITY_IAM \
+        --region $REGION 2>/dev/null || {
+        echo "No updates to be applied (or update failed). Continuing..."
+    }
+    aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $REGION 2>/dev/null || true
+    echo "✓ Stack updated"
+else
+    aws cloudformation create-stack \
+        --stack-name $STACK_NAME \
+        --template-body file://$PROJECT_ROOT/infrastructure/cloudformation-template.yaml \
+        --parameters \
+            ParameterKey=S3BucketName,ParameterValue=$BUCKET_NAME \
+            ParameterKey=TableName,ParameterValue=$TABLE_NAME \
+        --capabilities CAPABILITY_IAM \
+        --region $REGION
 
-echo "Waiting for stack creation to complete (this may take 2-3 minutes)..."
-aws cloudformation wait stack-create-complete \
-    --stack-name $STACK_NAME \
-    --region $REGION
+    echo "Waiting for stack creation to complete (this may take 2-3 minutes)..."
+    aws cloudformation wait stack-create-complete \
+        --stack-name $STACK_NAME \
+        --region $REGION
 
-echo "✓ Stack created successfully"
+    echo "✓ Stack created successfully"
+fi
 echo ""
 
 echo "Step 5: Getting stack outputs..."
@@ -118,12 +182,12 @@ echo "✓ Sample data loaded (12 Blender videos)"
 echo ""
 
 echo "Step 8: Uploading static website to S3..."
-aws s3 cp $PROJECT_ROOT/src/video-library.html s3://$S3_BUCKET/video-library.html
+aws s3 cp $PROJECT_ROOT/src/video-library.html s3://$S3_BUCKET/video-library.html --region $REGION
 echo "✓ Website uploaded"
 echo ""
 
 echo "Step 9: Cleaning up temporary Lambda bucket..."
-aws s3 rm s3://$LAMBDA_BUCKET/lambda-function.zip 2>/dev/null || true
+aws s3 rm s3://$LAMBDA_BUCKET/lambda-function.zip --region $REGION 2>/dev/null || true
 aws s3 rb s3://$LAMBDA_BUCKET --force 2>/dev/null || true
 echo "✓ Cleanup complete"
 echo ""

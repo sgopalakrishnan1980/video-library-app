@@ -14,6 +14,14 @@ cd video-library-app
 
 **Done!** Your video library is live in ~5 minutes.
 
+**Deploy to a specific region:**
+```bash
+./scripts/deploy.sh --region eu-west-1
+
+# Or via environment variable
+AWS_REGION=ap-south-1 ./scripts/deploy.sh
+```
+
 ---
 
 ## ✨ What's Included
@@ -80,8 +88,8 @@ cd video-library-app
 - Deploy: `aws lambda update-function-code --function-name VideoLibraryAPI --zip-file fileb://lambda-function.zip`
 
 ### "No videos"
-- Check: `aws dynamodb scan --table-name VideoLibrary --select COUNT`
-- Reload: `aws dynamodb batch-write-item --request-items file://sample-data/batch-write-items.json`
+- Check: `aws dynamodb scan --table-name VideoLibrary --select COUNT --region YOUR_REGION`
+- Reload: `aws dynamodb batch-write-item --request-items file://sample-data/batch-write-items.json --region YOUR_REGION`
 
 ---
 
