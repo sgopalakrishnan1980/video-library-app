@@ -93,6 +93,20 @@ AWS_REGION=ap-south-1 ./scripts/deploy.sh
 
 ---
 
+## 🔄 Switch to ScyllaDB Alternator (No Redeploy)
+
+Use the same Lambda and zip. Set env vars in **Lambda Console → Configuration → Environment variables**:
+
+| Variable | Value |
+|----------|-------|
+| `DYNAMODB_ENDPOINT` | `https://your-alternator-host:8000` |
+| `DYNAMODB_ACCESS_KEY_ID` | `alternator` (optional) |
+| `DYNAMODB_SECRET_ACCESS_KEY` | `secret` (optional) |
+
+Save. All DynamoDB calls now go to Alternator—no code or zip changes.
+
+---
+
 ## 📚 Full Documentation
 
 See `docs/` directory for complete guides:

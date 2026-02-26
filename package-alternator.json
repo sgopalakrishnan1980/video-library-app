@@ -1,0 +1,12 @@
+{
+  "name": "video-library-lambda-alternator",
+  "version": "1.0.0",
+  "description": "Lambda function for Video Library API - ScyllaDB Alternator backend",
+  "main": "src/alternator_index.js",
+  "dependencies": {
+    "aws-sdk": "^2.1691.0"
+  },
+  "alternatorDependencies": {
+    "_comment": "Alternator build requires: aws-sdk v2 (Alternator.js uses it). Alternator.js is bundled in src/."
+  }
+}

@@ -1,40 +1,42 @@
 /**
- * Video Library Lambda - uses AWS SDK v3 (required for Node.js 18 runtime)
- * Handler: index.handler
+ * Video Library Lambda - ScyllaDB Alternator backend
+ * Uses AWS SDK v2 + ScyllaDB Alternator load balancer module.
+ * Handler: alternator_index.handler
  *
- * To use ScyllaDB Alternator instead of DynamoDB: set env vars in Lambda Console
- * (Configuration → Environment variables) - no redeploy needed:
- *   DYNAMODB_ENDPOINT = https://your-alternator-host:8000
- *   DYNAMODB_ACCESS_KEY_ID = alternator    (optional, default: alternator)
- *   DYNAMODB_SECRET_ACCESS_KEY = secret   (optional, default: secret)
+ * Configuration is set in code below (ALTERNATOR_CONFIG).
+ * Requires: aws-sdk v2, Alternator.js (load balancer)
  */
-const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, QueryCommand, GetCommand, PutCommand } = require('@aws-sdk/lib-dynamodb');
+const AWS = require('aws-sdk');
+const alternator = require('./Alternator');
 
-// Default: AWS DynamoDB. When DYNAMODB_ENDPOINT is set → use ScyllaDB Alternator
-const endpoint = process.env.DYNAMODB_ENDPOINT;
-const clientConfig = endpoint
-    ? {
-          endpoint,
-          region: process.env.AWS_REGION || 'us-east-1',
-          credentials: {
-              accessKeyId: process.env.DYNAMODB_ACCESS_KEY_ID || 'alternator',
-              secretAccessKey: process.env.DYNAMODB_SECRET_ACCESS_KEY || 'secret',
-          },
-      }
-    : {};
+// ---------------------------------------------------------------------------
+// Alternator configuration (set in code, not env vars)
+// ---------------------------------------------------------------------------
+const ALTERNATOR_CONFIG = {
+    protocol: 'https',           // 'http' or 'https'
+    port: 8000,                 // Alternator port (default 8000)
+    hosts: [                    // Alternator node hostnames (at least one)
+        'alternator-node1.example.com',
+        'alternator-node2.example.com',
+    ],
+    credentials: {
+        accessKeyId: 'alternator',
+        secretAccessKey: 'secret',
+    },
+    tableName: 'VideoLibrary',
+};
 
-// Alternator config (commented) - uncomment to hardcode endpoint instead of env var:
-// const clientConfig = {
-//     endpoint: 'https://alternator-node.example.com:8000',
-//     region: 'us-east-1',
-//     credentials: { accessKeyId: 'alternator', secretAccessKey: 'secret' },
-// };
+// Initialize Alternator load balancer (client-side round-robin across nodes)
+alternator.init(
+    AWS,
+    ALTERNATOR_CONFIG.protocol,
+    ALTERNATOR_CONFIG.port,
+    ALTERNATOR_CONFIG.hosts,
+    ALTERNATOR_CONFIG.credentials
+);
 
-const client = new DynamoDBClient(clientConfig);
-const dynamodb = DynamoDBDocumentClient.from(client);
-
-const TABLE_NAME = process.env.TABLE_NAME || 'VideoLibrary';
+const dynamodb = new AWS.DynamoDB.DocumentClient();
+const TABLE_NAME = ALTERNATOR_CONFIG.tableName;
 
 const headers = {
     'Content-Type': 'application/json',
@@ -56,12 +58,8 @@ exports.handler = async (event) => {
 
     try {
         if (path.includes('/progress')) {
-            if (method === 'GET') {
-                return await handleGetProgress(queryParams);
-            }
-            if (method === 'POST') {
-                return await handleSaveProgress(event.body);
-            }
+            if (method === 'GET') return await handleGetProgress(queryParams);
+            if (method === 'POST') return await handleSaveProgress(event.body);
         }
 
         if (path.includes('/scan') && method === 'GET') {
@@ -93,11 +91,11 @@ exports.handler = async (event) => {
 
 async function handleScan(queryParams) {
     const pk = queryParams.pk || 'Library';
-    const result = await dynamodb.send(new QueryCommand({
+    const result = await dynamodb.query({
         TableName: TABLE_NAME,
         KeyConditionExpression: 'pk = :pk',
         ExpressionAttributeValues: { ':pk': pk }
-    }));
+    }).promise();
 
     return {
         statusCode: 200,
@@ -116,10 +114,10 @@ async function handleGetVideo(queryParams) {
         };
     }
 
-    const result = await dynamodb.send(new GetCommand({
+    const result = await dynamodb.get({
         TableName: TABLE_NAME,
         Key: { pk, sk }
-    }));
+    }).promise();
 
     if (!result.Item) {
         return {
@@ -147,10 +145,10 @@ async function handleGetProgress(queryParams) {
     }
 
     try {
-        const result = await dynamodb.send(new GetCommand({
+        const result = await dynamodb.get({
             TableName: TABLE_NAME,
             Key: { pk: `PROGRESS#${userId}`, sk: videoId }
-        }));
+        }).promise();
 
         if (!result.Item) {
             return {
@@ -202,7 +200,7 @@ async function handleSaveProgress(bodyStr) {
     }
 
     const timestamp = new Date().toISOString();
-    await dynamodb.send(new PutCommand({
+    await dynamodb.put({
         TableName: TABLE_NAME,
         Item: {
             pk: `PROGRESS#${userId}`,
@@ -214,7 +212,7 @@ async function handleSaveProgress(bodyStr) {
             timestamp: body.timestamp || timestamp,
             lastUpdated: timestamp
         }
-    }));
+    }).promise();
 
     return {
         statusCode: 200,
