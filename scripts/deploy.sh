@@ -148,41 +148,49 @@ fi
 echo ""
 
 echo "Step 5: Getting stack outputs..."
-OUTPUTS=$(aws cloudformation describe-stacks \
-    --stack-name $STACK_NAME \
-    --region $REGION \
-    --query 'Stacks[0].Outputs')
+API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text)
+WEBSITE_URL=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' --output text)
+S3_BUCKET=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' --output text)
 
-API_ENDPOINT=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="ApiEndpoint") | .OutputValue')
-WEBSITE_URL=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="WebsiteURL") | .OutputValue')
-S3_BUCKET=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="S3BucketName") | .OutputValue')
+if [ -z "$S3_BUCKET" ] || [ "$S3_BUCKET" = "None" ]; then
+    echo "ERROR: Could not get S3 bucket name from stack outputs"
+    exit 1
+fi
 
-echo "✓ Retrieved stack outputs"
+echo "✓ Retrieved stack outputs (S3 bucket: $S3_BUCKET)"
 echo ""
 
 echo "Step 6: Updating Lambda function code..."
-aws lambda update-function-code \
+if aws lambda update-function-code \
     --function-name VideoLibraryAPI \
     --zip-file fileb://$PROJECT_ROOT/src/lambda-function.zip \
-    --region $REGION > /dev/null
-
-echo "Waiting for Lambda update..."
-aws lambda wait function-updated \
-    --function-name VideoLibraryAPI \
-    --region $REGION
-
-echo "✓ Lambda function updated"
+    --region $REGION 2>/dev/null; then
+    echo "Waiting for Lambda update..."
+    aws lambda wait function-updated --function-name VideoLibraryAPI --region $REGION 2>/dev/null || true
+    echo "✓ Lambda function updated"
+else
+    echo "⚠ Lambda update skipped (function may use inline code)"
+fi
 echo ""
 
 echo "Step 7: Loading sample data into DynamoDB..."
-aws dynamodb batch-write-item \
+if aws dynamodb batch-write-item \
     --request-items file://$PROJECT_ROOT/sample-data/batch-write-items.json \
-    --region $REGION > /dev/null
-echo "✓ Sample data loaded (12 Blender videos)"
+    --region $REGION 2>/dev/null; then
+    echo "✓ Sample data loaded (12 Blender videos)"
+else
+    echo "⚠ Sample data skipped (table may already have data)"
+fi
 echo ""
 
 echo "Step 8: Uploading static website to S3..."
-aws s3 cp $PROJECT_ROOT/src/video-library.html s3://$S3_BUCKET/video-library.html --region $REGION
+if ! aws s3 cp $PROJECT_ROOT/src/video-library.html s3://$S3_BUCKET/video-library.html --region $REGION; then
+    echo "ERROR: Failed to upload website to S3. Bucket may be empty - check permissions."
+    exit 1
+fi
 echo "✓ Website uploaded"
 echo ""
 

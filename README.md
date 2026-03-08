@@ -91,6 +91,10 @@ AWS_REGION=ap-south-1 ./scripts/deploy.sh
 - Check: `aws dynamodb scan --table-name VideoLibrary --select COUNT --region YOUR_REGION`
 - Reload: `aws dynamodb batch-write-item --request-items file://sample-data/batch-write-items.json --region YOUR_REGION`
 
+### S3 bucket empty / website errors
+- The CloudFormation stack uploads a minimal placeholder on creation. Run the full deploy script to upload the app: `./scripts/deploy.sh`
+- If the bucket stays empty, run: `aws s3 cp src/video-library.html s3://YOUR_BUCKET/video-library.html --region YOUR_REGION`
+
 ### Privacy-first browsers (Brave, Firefox Strict, Safari Private, etc.)
 - **sessionStorage** is used to retain state (library, Continue Watching, playing video) across page refresh.
 - Some privacy-focused browsers restrict or clear sessionStorage, which can cause:
